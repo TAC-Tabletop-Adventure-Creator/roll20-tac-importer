@@ -3,52 +3,167 @@
         log('Tabletop Adventure Creator Import Script loaded!');
     });
 
-    // Deletes an existing Roll20 object by name
-    const deleteExistingObject = (type, name) => {
-        const existing = findObjs({ _type: type, name });
-        if (existing.length) {
-            existing.forEach(obj => obj.remove());
-            log(`Deleted existing ${type} with name: ${name}`);
-        }
-    };
-
     // Logs and handles failures
     const handleFailure = (type, name, error) => {
         log(`ROLL20 ERROR: Failed to create ${type}: ${name}. Error: ${error.message || error}`);
     };
 
-    // Imports a scene as a Roll20 Page
-    const importScene = (scene) => {
-        let success = 0, failure = 0;
+    // Deletes existing Roll20 objects by name
+    const deleteExistingObjects = (type, name) => {
+        const existing = findObjs({ _type: type, name: name });
+        if (existing.length) {
+            existing.forEach(obj => obj.remove());
+            log(`Deleted ${existing.length} existing ${type}(s) with name: ${name}`);
+        }
+    };
 
+    // Adds an image to the map layer of a page
+    const addImageToMapLayer = (imageUrl, pageId) => {
+        // Create the graphic on the map layer
+        const graphic = createObj("graphic", {
+            _pageid: pageId,
+            imgsrc: imageUrl,
+            layer: "map",
+            left: 768,
+            top: 768,
+            width: 1536,
+            height: 1536,
+            rotation: 0
+        });
+
+        if (!graphic) {
+            log("ERROR: Failed to create the graphic on the map layer.");
+            return false;
+        }
+
+        log(`Image added to map layer successfully`);
+        return true;
+    };
+
+    // Adds a wall to the walls layer of a page
+    const addWall = (pageId, startX, startY, endX, endY) => {
         try {
-            deleteExistingObject('page', scene.name); // Delete existing page if it exists
-            log(`Importing scene: ${scene.name}`);
-
-            // Create a new Page
-            const page = createObj('page', {
-                name: scene.name,
-                showgrid: true, // Enable grid by default
-                background_color: '#ffffff',
-                scale_number: 5, // Default scale
-                scale_units: 'ft',
-                grid_type: 1, // Square grid
-                grid_opacity: 0.5,
-                gridcolor: '#000000',
-                snapping_increment: 1,
+            // Create the wall using PathV2
+            const wall = createObj("pathv2", {
+                _pageid: pageId,
+                shape: "pol", // polyline shape for walls
+                points: JSON.stringify([[startX, startY], [endX, endY]]), // array of points
+                stroke: "#0000ff",
+                stroke_width: 5,
+                layer: "walls",
+                fill: "transparent",
+                x: (startX + endX) / 2, // center x coordinate
+                y: (startY + endY) / 2, // center y coordinate
+                rotation: 0,
+                barrierType: "wall", // dynamic lighting wall type
+                controlledby: "" // GM control only
             });
 
-            if (!page) throw new Error('Failed to create page.');
-
-            if (scene.imageUrl) {
-                page.set('background_image', scene.imageUrl);
+            if (!wall) {
+                log(`ERROR: Failed to create wall from (${startX},${startY}) to (${endX},${endY})`);
+                return false;
             }
 
-            log(`Scene imported: ${scene.name}`);
+            return true;
+        } catch (error) {
+            log(`ERROR: Wall creation failed: ${error.message}`);
+            return false;
+        }
+    };
+
+    // Configures an existing Roll20 Page
+    const configureScene = (scene) => {
+        let success = 0, failure = 0;
+        let errors = [];
+
+        try {
+            log(`Looking for scene to configure: ${scene.name}`);
+            const existingPages = findObjs({ _type: 'page', name: scene.name });
+            
+            if (!existingPages.length) {
+                throw new Error(`No page found with name: ${scene.name}`);
+            }
+
+            const page = existingPages[0];
+            
+            // Clean up existing objects on the page
+            log(`Cleaning up existing objects on page: ${scene.name}`);
+            const existingGraphics = findObjs({ _type: 'graphic', _pageid: page.id });
+            const existingPaths = findObjs({ _type: 'pathv2', _pageid: page.id });
+            
+            existingGraphics.forEach(obj => {
+                obj.remove();
+            });
+            existingPaths.forEach(obj => {
+                obj.remove();
+            });
+            
+            log(`Removed ${existingGraphics.length} graphics and ${existingPaths.length} walls`);
+
+            // Update page settings for 1536x1536 with 50px grid
+            const pageSettings = {
+                showgrid: true,
+                snapping_increment: 0.7142857142857143, //configure to ~50px cell width
+                width: 21.94, // 1536/70 = 21.94 roughly, when we set snapping_increment to make 50px cells this will scale
+                height: 21.94,
+                grid_opacity: 0.5,
+                scale_number: 5,
+                scale_units: "ft",
+                background_color: "#ffffff",
+                grid_type: "square",
+                dynamic_lighting_enabled: true,
+                explorer_mode: 'basic'
+            };
+
+            page.set(pageSettings);
+
+            // Add the background image first
+            if (scene.imageUrl) {
+                log(`Adding background image to scene: ${scene.name}`);
+                // TODO: Remove this once we have a real image
+                const imageUrl = 'https://files.d20.io/images/422031521/vCp6ixb_gawlk04DMeGkhQ/max.webp?1734898548';
+                if (!addImageToMapLayer(imageUrl, page.id)) {
+                    errors.push('Failed to add background image to map layer');
+                }
+            }
+
+            // Then add walls if they exist
+            if (scene.walls && scene.walls.length > 0) {
+                log(`Adding ${scene.walls.length} walls to scene: ${scene.name}`);
+                let wallsAdded = 0;
+                
+                scene.walls.forEach(wall => {
+                    // Scale wall coordinates to match page size (using 70px as our base unit)
+                    const scaleFactor = 70;
+                    const scaledStartX = Math.round((wall.startX / 1536) * scaleFactor * page.get('width'));
+                    const scaledStartY = Math.round((wall.startY / 1536) * scaleFactor * page.get('height'));
+                    const scaledEndX = Math.round((wall.endX / 1536) * scaleFactor * page.get('width'));
+                    const scaledEndY = Math.round((wall.endY / 1536) * scaleFactor * page.get('height'));
+
+                    log(`Adding wall from (${scaledStartX},${scaledStartY}) to (${scaledEndX},${scaledEndY})`);
+                    
+                    if (addWall(page.id, scaledStartX, scaledStartY, scaledEndX, scaledEndY)) {
+                        wallsAdded++;
+                    }
+                });
+
+                log(`Successfully added ${wallsAdded} of ${scene.walls.length} walls`);
+                
+                if (wallsAdded < scene.walls.length) {
+                    errors.push(`Failed to add ${scene.walls.length - wallsAdded} walls`);
+                }
+            }
+
+            // If we have any errors, throw them all together
+            if (errors.length > 0) {
+                throw new Error(errors.join('; '));
+            }
+
+            log(`Scene configured: ${scene.name}`);
             success++;
         } catch (error) {
             failure++;
-            handleFailure('Scene', scene.name, error);
+            handleFailure('Scene Configuration', scene.name, error);
         }
 
         return { success, failure };
@@ -59,12 +174,13 @@
         let success = 0, failure = 0;
 
         try {
-            deleteExistingObject('character', npc.name); // Delete existing character if it exists
+            deleteExistingObjects('character', npc.name); // Delete existing characters if they exist
             log(`Importing NPC: ${npc.name}`);
 
             const character = createObj('character', {
                 name: npc.name,
                 archived: false,
+                avatar: 'https://files.d20.io/images/371064590/xocfkaWzISMpNlQWyDGxWg/max.png?1702226705'
             });
 
             if (!character) throw new Error('Failed to create character object.');
@@ -94,7 +210,7 @@
         let success = 0, failure = 0;
 
         try {
-            deleteExistingObject('handout', note.name); // Delete existing handout if it exists
+            deleteExistingObjects('handout', note.name); // Delete existing handouts if they exist
             log(`Importing note: ${note.name}`);
 
             const handout = createObj('handout', {
@@ -124,33 +240,41 @@
         let monsterSuccess = 0, monsterFailure = 0;
         let noteSuccess = 0, noteFailure = 0;
 
-        // Process scenes
-        scenes.forEach((scene) => {
-            const { success, failure } = importScene(scene);
-            sceneSuccess += success;
-            sceneFailure += failure;
-        });
+        // Configure scenes first
+        if (scenes.length) {
+            log('Configuring scenes...');
+            scenes.forEach((scene) => {
+                const { success, failure } = configureScene(scene);
+                sceneSuccess += success;
+                sceneFailure += failure;
+            });
+        }
 
-        // Process monsters
-        monsters.forEach((npc) => {
-            const { success, failure } = importNPC(npc);
-            monsterSuccess += success;
-            monsterFailure += failure;
-        });
+        // Then process monsters and notes
+        if (monsters.length) {
+            log('Processing monsters...');
+            monsters.forEach((npc) => {
+                const { success, failure } = importNPC(npc);
+                monsterSuccess += success;
+                monsterFailure += failure;
+            });
+        }
 
-        // Process notes
-        notes.forEach((note) => {
-            const { success, failure } = importNote(note);
-            noteSuccess += success;
-            noteFailure += failure;
-        });
+        if (notes.length) {
+            log('Processing notes...');
+            notes.forEach((note) => {
+                const { success, failure } = importNote(note);
+                noteSuccess += success;
+                noteFailure += failure;
+            });
+        }
 
         // Prepare final summary
         const report = `TAC Import Complete.\n` +
-            `Scenes: ${sceneSuccess} imported, ${sceneFailure} failed.\n` +
+            `Scenes: ${sceneSuccess} configured, ${sceneFailure} failed.\n` +
             `Monsters: ${monsterSuccess} imported, ${monsterFailure} failed.\n` +
             `Notes: ${noteSuccess} imported, ${noteFailure} failed.`;
-
+        log(report);
         sendChat('tac', `/w gm ${report}`);
     };
 
