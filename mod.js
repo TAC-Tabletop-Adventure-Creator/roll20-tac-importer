@@ -71,6 +71,57 @@
         }
     };
 
+    // Adds a light to the objects layer of a page
+    const addLight = (pageId, x, y, radius, hexColor) => {
+        try {
+            // Create the light token
+            const light = createObj("graphic", {
+                _pageid: pageId,
+                imgsrc: "https://s3.amazonaws.com/files.d20.io/images/4277467/iQYjFOsYC5JsuOPUCI9RGA/thumb.png?1401938659",
+                subtype: 'token',
+                name: '',
+                
+                // use an aura to demonstrate the light radius (invisible because it's wall layer)
+                aura1_color: hexColor,
+                aura1_square: false,
+                aura1_radius: radius,
+
+                emits_bright_light: true,
+                emits_low_light: true,
+                bright_light_distance: Math.round(radius / 2),
+                low_light_distance: Math.round(radius),
+                lightColor: hexColor,
+                //light_radius: 3,
+                //light_dimradius: 6,
+                //lightColor: hexColor,
+                /*
+                bright_light_distance: radius / 2,
+                low_light_distance: radius,
+                lightColor: hexColor,
+                has_directional_bright_light: false,
+                has_directional_dim_light: false,
+                */
+
+                width:70,
+                height:70,
+                top: y,
+                left: x,
+                controlledby: "",
+                layer: "walls",
+            });
+
+            if (!light) {
+                log(`ERROR: Failed to create light at (${x},${y})`);
+                return false;
+            }
+
+            return true;
+        } catch (error) {
+            log(`ERROR: Light creation failed: ${error.message}`);
+            return false;
+        }
+    };
+
     // Configures an existing Roll20 Page
     const configureScene = (scene) => {
         let success = 0, failure = 0;
@@ -151,6 +202,33 @@
                 
                 if (wallsAdded < scene.walls.length) {
                     errors.push(`Failed to add ${scene.walls.length - wallsAdded} walls`);
+                }
+            }
+
+            // Add lights if they exist
+            if (scene.lights && scene.lights.length > 0) {
+                log(`Adding ${scene.lights.length} lights to scene: ${scene.name}`);
+                let lightsAdded = 0;
+                
+                scene.lights.forEach(light => {
+                    // Scale light coordinates to match page size
+                    const scaleFactor = 70;
+                    const scaledX = Math.round((light.x / 1536) * scaleFactor * page.get('width'));
+                    const scaledY = Math.round((light.y / 1536) * scaleFactor * page.get('height'));
+                    // Divide by 5 to scale to ft for light radius
+                    const scaledRadius = Math.round((light.radius / 1536) * scaleFactor * page.get('width') / 5);
+                    
+                    log(`Adding light at (${scaledX},${scaledY}) with radius ${scaledRadius}`);
+                    
+                    if (addLight(page.id, scaledX, scaledY, scaledRadius, light.hexColor)) {
+                        lightsAdded++;
+                    }
+                });
+
+                log(`Successfully added ${lightsAdded} of ${scene.lights.length} lights`);
+                
+                if (lightsAdded < scene.lights.length) {
+                    errors.push(`Failed to add ${scene.lights.length - lightsAdded} lights`);
                 }
             }
 
