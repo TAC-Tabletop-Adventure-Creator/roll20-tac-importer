@@ -77,11 +77,12 @@
             // Create the light token
             const light = createObj("graphic", {
                 _pageid: pageId,
+                // Invisible token thumbnail
                 imgsrc: "https://s3.amazonaws.com/files.d20.io/images/4277467/iQYjFOsYC5JsuOPUCI9RGA/thumb.png?1401938659",
                 subtype: 'token',
                 name: '',
                 
-                // use an aura to demonstrate the light radius (invisible because it's wall layer)
+                // use an aura to demonstrate the light radius for dm (invisible because it's wall layer)
                 aura1_color: hexColor,
                 aura1_square: false,
                 aura1_radius: radius,
@@ -91,16 +92,6 @@
                 bright_light_distance: Math.round(radius / 2),
                 low_light_distance: Math.round(radius),
                 lightColor: hexColor,
-                //light_radius: 3,
-                //light_dimradius: 6,
-                //lightColor: hexColor,
-                /*
-                bright_light_distance: radius / 2,
-                low_light_distance: radius,
-                lightColor: hexColor,
-                has_directional_bright_light: false,
-                has_directional_dim_light: false,
-                */
 
                 width:70,
                 height:70,
@@ -252,7 +243,7 @@
         let success = 0, failure = 0;
 
         try {
-            deleteExistingObjects('character', npc.name); // Delete existing characters if they exist
+            deleteExistingObjects('character', npc.name);
             log(`Importing NPC: ${npc.name}`);
 
             const character = createObj('character', {
@@ -266,7 +257,7 @@
             createObj('attribute', {
                 characterid: character.id,
                 name: 'npc_description',
-                current: npc.description,
+                bio: npc.description,
             });
 
             if (npc.imageUrl) {
@@ -356,25 +347,75 @@
         sendChat('tac', `/w gm ${report}`);
     };
 
+    // Helper function to get attributes based on sheet type
+    const getAttribute = async (characterId, property) => {
+        const character = getObj("character", characterId);
+        const sheetShortname = character.get("charactersheetname");
+        if (sheetShortname === "dnd2024byroll20") {
+            return await getComputed({ characterId, property });
+        }
+        return getAttrByName(characterId, property);
+    };
+
+    // Dumps the full data structure of all characters
+    const dumpCharacterData = async () => {
+        const existingCharacters = findObjs({ _type: 'character' });
+        log(`Found ${existingCharacters.length} existing characters`);
+        
+        for (const char of existingCharacters) {
+            try {
+                // Base character data
+                log('\n==================== BASE CHARACTER ====================');
+                log(JSON.stringify(char));
+
+                // Get all attributes for this character
+                const attributes = findObjs({ 
+                    _type: 'attribute',
+                    _characterid: char.id 
+                });
+
+                log('\n==================== SHEET ATTRIBUTES ====================');
+                for (const attr of attributes) {
+                    const name = attr.get('name');
+                    const rawCurrent = attr.get('current');
+                    const rawMax = attr.get('max');
+
+                    log(`----${name}----`);
+                    log(rawCurrent);
+                    log(rawMax);
+                }
+            } catch (e) {
+                log(`Error processing character: ${e.message}`);
+            }
+        }
+
+        sendChat('tac', `/w gm Character data dumped to console. Found ${existingCharacters.length} characters.`);
+    };
+
     // Chat message handler
     on('chat:message', (msg) => {
         if (msg.type !== 'api') return;
 
-        const args = msg.content.split(/ --(help|import) ?/g);
+        const args = msg.content.split(/ --(help|import|dump) ?/g);
         const command = args.shift().substring(1).trim();
 
         if (command !== 'tac') return;
 
-        const subCommand = args[0]?.trim();
-        const param = args[1]?.trim();
+        const subCommand = args[0]?.trim() || '';
 
         switch (subCommand) {
             case 'help':
                 log('Help command invoked.');
-                sendChat('tac', '/w gm Use --import {json} to import TAC data.');
+                sendChat('tac', '/w gm Use --import {json} to import TAC data, or --dump to see character data.');
+                break;
+
+            case 'dump':
+                log('Dump command invoked.');
+                dumpCharacterData();
                 break;
 
             case 'import':
+                const param = args[1]?.trim();
                 if (!param) {
                     log('Import command requires a JSON string parameter.');
                     sendChat('tac', '/w gm Provide a valid JSON string for import.');
